@@ -1,0 +1,41 @@
+{
+  "name": "discord-light",
+  "version": "2.0.0",
+  "description": "Production-ready, lightweight, superfast Discord library for Node.js with voice support",
+  "main": "dist/index.js",
+  "types": "types/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "api",
+    "voice",
+    "websocket",
+    "slash-commands",
+    "lightweight",
+    "fast",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.0"
+  },
+  "optionalDependencies": {
+    "sodium-native": "^4.0.0"
+  }
+}

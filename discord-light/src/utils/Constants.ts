@@ -1,0 +1,144 @@
+export const API_VERSION = 10;
+export const BASE_URL = `https://discord.com/api/v${API_VERSION}`;
+export const CDN_URL = 'https://cdn.discordapp.com';
+export const GATEWAY_VERSION = 10;
+
+export const GatewayOpcodes = {
+  DISPATCH: 0,
+  HEARTBEAT: 1,
+  IDENTIFY: 2,
+  PRESENCE_UPDATE: 3,
+  VOICE_STATE_UPDATE: 4,
+  VOICE_SERVER_PING: 5,
+  RESUME: 6,
+  RECONNECT: 7,
+  REQUEST_GUILD_MEMBERS: 8,
+  INVALID_SESSION: 9,
+  HELLO: 10,
+  HEARTBEAT_ACK: 11,
+} as const;
+
+export const VoiceOpcodes = {
+  IDENTIFY: 0,
+  SELECT_PROTOCOL: 1,
+  READY: 2,
+  HEARTBEAT: 3,
+  SESSION_DESCRIPTION: 4,
+  SPEAKING: 5,
+  HEARTBEAT_ACK: 6,
+  RESUME: 7,
+  HELLO: 8,
+  RESUMED: 9,
+  CLIENT_DISCONNECT: 13,
+} as const;
+
+export const GatewayCloseCodes = {
+  UNKNOWN_ERROR: 4000,
+  UNKNOWN_OPCODE: 4001,
+  DECODE_ERROR: 4002,
+  NOT_AUTHENTICATED: 4003,
+  AUTHENTICATION_FAILED: 4004,
+  ALREADY_AUTHENTICATED: 4005,
+  INVALID_SEQ: 4007,
+  RATE_LIMITED: 4008,
+  SESSION_TIMED_OUT: 4009,
+  INVALID_SHARD: 4010,
+  SHARDING_REQUIRED: 4011,
+  INVALID_API_VERSION: 4012,
+  INVALID_INTENTS: 4013,
+  DISALLOWED_INTENTS: 4014,
+} as const;
+
+export const ResumeableCloseCodes = [
+  4000, 4001, 4002, 4003, 4005, 4007, 4008, 4009,
+];
+
+export const FatalCloseCodes = [
+  4004, 4010, 4011, 4012, 4013, 4014,
+];
+
+export const Intents = {
+  GUILDS: 1 << 0,
+  GUILD_MEMBERS: 1 << 1,
+  GUILD_MODERATION: 1 << 2,
+  GUILD_EMOJIS_AND_STICKERS: 1 << 3,
+  GUILD_INTEGRATIONS: 1 << 4,
+  GUILD_WEBHOOKS: 1 << 5,
+  GUILD_INVITES: 1 << 6,
+  GUILD_VOICE_STATES: 1 << 7,
+  GUILD_PRESENCES: 1 << 8,
+  GUILD_MESSAGES: 1 << 9,
+  GUILD_MESSAGE_REACTIONS: 1 << 10,
+  GUILD_MESSAGE_TYPING: 1 << 11,
+  DIRECT_MESSAGES: 1 << 12,
+  DIRECT_MESSAGE_REACTIONS: 1 << 13,
+  DIRECT_MESSAGE_TYPING: 1 << 14,
+  MESSAGE_CONTENT: 1 << 15,
+  GUILD_SCHEDULED_EVENTS: 1 << 16,
+  AUTO_MODERATION_CONFIGURATION: 1 << 20,
+  AUTO_MODERATION_EXECUTION: 1 << 21,
+} as const;
+
+export type IntentFlags = typeof Intents;
+export type IntentKey = keyof IntentFlags;
+
+export enum ChannelType {
+  GUILD_TEXT = 0,
+  DM = 1,
+  GUILD_VOICE = 2,
+  GROUP_DM = 3,
+  GUILD_CATEGORY = 4,
+  GUILD_ANNOUNCEMENT = 5,
+  ANNOUNCEMENT_THREAD = 10,
+  PUBLIC_THREAD = 11,
+  PRIVATE_THREAD = 12,
+  GUILD_STAGE_VOICE = 13,
+  GUILD_DIRECTORY = 14,
+  GUILD_FORUM = 15,
+  GUILD_MEDIA = 16,
+}
+
+export enum InteractionType {
+  PING = 1,
+  APPLICATION_COMMAND = 2,
+  MESSAGE_COMPONENT = 3,
+  APPLICATION_COMMAND_AUTOCOMPLETE = 4,
+  MODAL_SUBMIT = 5,
+}
+
+export enum ApplicationCommandType {
+  CHAT_INPUT = 1,
+  USER = 2,
+  MESSAGE = 3,
+}
+
+export enum MessageComponentType {
+  ACTION_ROW = 1,
+  BUTTON = 2,
+  STRING_SELECT = 3,
+  TEXT_INPUT = 4,
+  USER_SELECT = 5,
+  ROLE_SELECT = 6,
+  MENTIONABLE_SELECT = 7,
+  CHANNEL_SELECT = 8,
+}
+
+export enum ButtonStyle {
+  PRIMARY = 1,
+  SECONDARY = 2,
+  SUCCESS = 3,
+  DANGER = 4,
+  LINK = 5,
+}
+
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  NO_CONTENT: 204,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  TOO_MANY_REQUESTS: 429,
+  SERVER_ERROR: 500,
+} as const;
