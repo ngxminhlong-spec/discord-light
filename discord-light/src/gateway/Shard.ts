@@ -13,6 +13,16 @@ interface GatewayPayload {
 
 type ShardState = 'idle' | 'connecting' | 'identifying' | 'ready' | 'resuming' | 'disconnected' | 'reconnecting';
 
+// Pre-compiled constants to avoid repeated allocations
+const GATEWAY_VERSION = '10';
+const GATEWAY_ENCODING = 'json';
+const IP_DISCOVERY_LENGTH = 70;
+const HEARTBEAT_ACK_TIMEOUT = 5000;
+const MAX_MISSED_HEARTBEATS = 2;
+const RECONNECT_BASE = 500; // Reduced from 1000ms
+const RECONNECT_MAX_ATTEMPTS = 6; // 2^6 = 64x multiplier
+const RECONNECT_MAX_DELAY = 30000; // Reduced from 60000ms
+
 export class Shard extends EventEmitter {
   #client: Client;
   #id: number;
@@ -32,8 +42,17 @@ export class Shard extends EventEmitter {
   #totalShards: number;
   #closeCount = 0;
   #lastReadyAt = 0;
+  #messageBuffer: GatewayPayload[] = []; // Buffer for batching
+  #isProcessingMessages = false;
 
-  constructor(client: Client, id: number, totalShards: number, gatewayURL: string, token: string, intents: number) {
+  constructor(
+    client: Client,
+    id: number,
+    totalShards: number,
+    gatewayURL: string,
+    token: string,
+    intents: number
+  ) {
     super();
     this.#client = client;
     this.#id = id;
@@ -74,10 +93,15 @@ export class Shard extends EventEmitter {
     this.#logger.info('Connecting to gateway...');
 
     const url = new URL(this.#gatewayURL);
-    url.searchParams.set('v', '10');
-    url.searchParams.set('encoding', 'json');
+    url.searchParams.set('v', GATEWAY_VERSION);
+    url.searchParams.set('encoding', GATEWAY_ENCODING);
 
-    this.#ws = new WebSocket(url.toString());
+    // Connection pool settings for better performance
+    this.#ws = new WebSocket(url.toString(), {
+      perMessageDeflate: false, // Disable compression for lower latency
+      handshakeTimeout: 10000,
+    });
+
     this.#ws.on('open', () => this.#onOpen());
     this.#ws.on('message', (data) => this.#onMessage(data));
     this.#ws.on('close', (code, reason) => this.#onClose(code, reason));
@@ -89,15 +113,47 @@ export class Shard extends EventEmitter {
     this.emit('open');
   }
 
+  /**
+   * Buffer and batch message processing
+   */
   #onMessage(data: WebSocket.RawData): void {
     let payload: GatewayPayload;
     try {
-      payload = JSON.parse(data.toString());
+      payload = JSON.parse(data.toString('utf8'));
     } catch {
       this.#logger.warn('Failed to parse gateway payload');
       return;
     }
 
+    // Buffer message and process in batch
+    this.#messageBuffer.push(payload);
+    if (!this.#isProcessingMessages) {
+      this.#isProcessingMessages = true;
+      setImmediate(() => this.#processMessageBuffer());
+    }
+  }
+
+  /**
+   * Process batched messages to reduce event loop pressure
+   */
+  #processMessageBuffer(): void {
+    const batch = this.#messageBuffer.splice(0, 20); // Process up to 20 messages per batch
+    for (const payload of batch) {
+      this.#handlePayload(payload);
+    }
+
+    this.#isProcessingMessages = false;
+
+    if (this.#messageBuffer.length > 0) {
+      this.#isProcessingMessages = true;
+      setImmediate(() => this.#processMessageBuffer());
+    }
+  }
+
+  /**
+   * Handle single payload
+   */
+  #handlePayload(payload: GatewayPayload): void {
     if (payload.s !== undefined && payload.s !== null) {
       this.#seq = payload.s;
     }
@@ -204,11 +260,14 @@ export class Shard extends EventEmitter {
     this.emit('error', err);
   }
 
+  /**
+   * Optimized reconnect backoff (50% faster)
+   */
   #scheduleReconnect(): void {
     this.#closeCount++;
-    // Exponential backoff with jitter: base 1s, max 60s
-    const baseDelay = Math.min(1000 * Math.pow(2, Math.min(this.#closeCount - 1, 6)), 60000);
-    const jitter = Math.random() * 1000;
+    const attempts = Math.min(this.#closeCount - 1, RECONNECT_MAX_ATTEMPTS);
+    const baseDelay = Math.min(RECONNECT_BASE * Math.pow(2, attempts), RECONNECT_MAX_DELAY);
+    const jitter = Math.random() * 100; // Reduced jitter
     const delay = baseDelay + jitter;
 
     this.#logger.info('Reconnecting in %dms (attempt %d)', Math.round(delay), this.#closeCount);
@@ -222,15 +281,14 @@ export class Shard extends EventEmitter {
   }
 
   #startHeartbeat(interval: number): void {
-    // Clear any existing heartbeat
     this.#cleanupHeartbeat();
 
     this.#heartbeatInterval = setInterval(() => {
       if (!this.#heartbeatAck) {
         this.#missedHeartbeats++;
-        this.#logger.warn('Heartbeat ACK missed (%d/2)', this.#missedHeartbeats);
+        this.#logger.warn('Heartbeat ACK missed (%d/%d)', this.#missedHeartbeats, MAX_MISSED_HEARTBEATS);
 
-        if (this.#missedHeartbeats >= 2) {
+        if (this.#missedHeartbeats >= MAX_MISSED_HEARTBEATS) {
           this.#logger.error('Zombie connection detected! Forcing reconnect.');
           this.#ws?.terminate();
           this.#cleanup();
@@ -276,7 +334,12 @@ export class Shard extends EventEmitter {
     });
   }
 
-  sendVoiceStateUpdate(guildId: string, channelId: string | null, selfMute = false, selfDeaf = false): void {
+  sendVoiceStateUpdate(
+    guildId: string,
+    channelId: string | null,
+    selfMute = false,
+    selfDeaf = false
+  ): void {
     this.#send({
       op: GatewayOpcodes.VOICE_STATE_UPDATE,
       d: {
@@ -302,6 +365,7 @@ export class Shard extends EventEmitter {
     }
     this.#ws?.removeAllListeners();
     this.#ws = null;
+    this.#messageBuffer.length = 0;
     if (this.#state !== 'reconnecting') {
       this.#state = 'disconnected';
     }
