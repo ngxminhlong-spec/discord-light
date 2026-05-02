@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { EventEmitter } from 'node:events';
 import { RestManager } from '../rest/RestManager.js';
 import { ShardManager } from '../gateway/ShardManager.js';

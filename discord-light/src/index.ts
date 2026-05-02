@@ -14,7 +14,7 @@ export { Message, type MessageData } from './structures/Message.js';
 export { Collection } from './utils/Collection.js';
 export {
   Intents, ChannelType, API_VERSION, BASE_URL, CDN_URL,
-  GatewayOpcodes, VoiceOpcodes, GatewayCloseCodes,
+  GatewayOpcodes, GatewayCloseCodes,
   ResumeableCloseCodes, FatalCloseCodes,
   InteractionType, ApplicationCommandType, MessageComponentType, ButtonStyle,
   HTTP_STATUS,
