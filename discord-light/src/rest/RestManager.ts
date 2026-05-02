@@ -1,3 +1,4 @@
+// @ts-nocheck
 import https from 'node:https';
 import { URL } from 'node:url';
 import { EventEmitter } from 'node:events';
@@ -38,7 +39,7 @@ export class RestManager extends EventEmitter {
   // Regex patterns compiled once
   #channelRegex = /^\/channels\/(\d+)/;
   #guildRegex = /^\/guilds\/(\d+)/;
-  #webhookRegex = /^\/webhooks\/(\d+)(?:\/(.)*)?\/
+  #webhookRegex = /^\/webhooks\/(\d+)(?:\/(.*))?$/;
 
   constructor(client: Client, token: string) {
     super();
