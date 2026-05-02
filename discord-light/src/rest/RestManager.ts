@@ -1,10 +1,10 @@
 import https from 'node:https';
 import { URL } from 'node:url';
 import { EventEmitter } from 'node:events';
+import type { IncomingMessage, RequestOptions as HTTPSRequestOptions } from 'node:http';
 import { Bucket, type QueuedRequest, type RateLimitData } from './Bucket.js';
 import { Logger, LogLevel } from '../utils/Logger.js';
 import { BASE_URL, HTTP_STATUS } from '../utils/Constants.js';
-import type { Client } from '../client/Client.js';
 
 export interface RequestOptions {
   method?: string;
@@ -14,7 +14,7 @@ export interface RequestOptions {
   retries?: number;
 }
 
-interface DiscordAPIError {
+interface DiscordAPIErrorPayload {
   code: number;
   message: string;
   errors?: unknown;
@@ -26,23 +26,19 @@ const MAX_BUCKET_CACHE_SIZE = 1000;
 
 export class RestManager extends EventEmitter {
   #token: string;
-  #client: Client;
   #logger: Logger;
   #buckets: Map<string, Bucket> = new Map();
   #globalReset = 0;
   #userAgent = 'DiscordLight (https://github.com/discord-light, 2.0.0)';
-  #requestBuffer: Array<{ endpoint: string; options: RequestOptions }> = [];
-  #bufferTimer: NodeJS.Timeout | null = null;
-  #bufferInterval = 10; // ms - batch requests within this interval
+  // Reserved for future request coalescing.
 
   // Regex patterns compiled once
   #channelRegex = /^\/channels\/(\d+)/;
   #guildRegex = /^\/guilds\/(\d+)/;
-  #webhookRegex = /^\/webhooks\/(\d+)(?:\/(.)*)?\/
+  #webhookRegex = /^\/webhooks\/(\d+)(?:\/(.*))?$/;
 
-  constructor(client: Client, token: string) {
+  constructor(_client: unknown, token: string) {
     super();
-    this.#client = client;
     this.#token = token;
     this.#logger = new Logger(LogLevel.INFO, 'REST');
   }
@@ -175,7 +171,7 @@ export class RestManager extends EventEmitter {
 
     // Handle Discord API errors (4xx)
     if (response.statusCode && response.statusCode >= 400) {
-      const data = await this.#parseBody<DiscordAPIError>(response);
+      const data = await this.#parseBody<DiscordAPIErrorPayload>(response);
       const error = new DiscordAPIError(
         data?.code ?? response.statusCode,
         data?.message ?? `HTTP ${response.statusCode}`,
@@ -199,20 +195,15 @@ export class RestManager extends EventEmitter {
     method: string,
     headers: Record<string, string>,
     body?: string
-  ): Promise<https.IncomingMessage> {
+  ): Promise<IncomingMessage> {
     return new Promise((resolve, reject) => {
-      const req = https.request(
-        {
-          hostname: url.hostname,
-          path: url.pathname + url.search,
-          method,
-          headers,
-          // Add connection pooling options for better performance
-          keepAlive: true,
-          maxSockets: 32,
-        },
-        (res) => resolve(res)
-      );
+      const requestOptions: HTTPSRequestOptions = {
+        hostname: url.hostname,
+        path: url.pathname + url.search,
+        method,
+        headers,
+      };
+      const req = https.request(requestOptions, (res) => resolve(res));
 
       req.on('error', reject);
 
@@ -223,7 +214,7 @@ export class RestManager extends EventEmitter {
     });
   }
 
-  #parseBody<T>(response: https.IncomingMessage): Promise<T> {
+  #parseBody<T>(response: IncomingMessage): Promise<T> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       let totalSize = 0;
@@ -282,7 +273,7 @@ export class RestManager extends EventEmitter {
     // Update cache with size limit
     if (BUCKET_CACHE.size >= MAX_BUCKET_CACHE_SIZE) {
       const firstKey = BUCKET_CACHE.keys().next().value;
-      BUCKET_CACHE.delete(firstKey);
+      if (firstKey) BUCKET_CACHE.delete(firstKey);
     }
     BUCKET_CACHE.set(cacheKey, bucketId);
 
