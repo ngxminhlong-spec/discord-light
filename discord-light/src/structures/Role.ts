@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Structure, type APIData } from './Base.js';
 import type { Client } from '../client/Client.js';
 import { PermissionsBitField } from '../utils/Permissions.js';

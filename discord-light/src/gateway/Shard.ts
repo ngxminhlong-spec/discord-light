@@ -2,7 +2,6 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { GatewayOpcodes, ResumeableCloseCodes, FatalCloseCodes } from '../utils/Constants.js';
 import { Logger, LogLevel } from '../utils/Logger.js';
-import type { Client } from '../client/Client.js';
 
 interface GatewayPayload {
   op: number;
@@ -16,15 +15,12 @@ type ShardState = 'idle' | 'connecting' | 'identifying' | 'ready' | 'resuming' |
 // Pre-compiled constants to avoid repeated allocations
 const GATEWAY_VERSION = '10';
 const GATEWAY_ENCODING = 'json';
-const IP_DISCOVERY_LENGTH = 70;
-const HEARTBEAT_ACK_TIMEOUT = 5000;
 const MAX_MISSED_HEARTBEATS = 2;
 const RECONNECT_BASE = 500; // Reduced from 1000ms
 const RECONNECT_MAX_ATTEMPTS = 6; // 2^6 = 64x multiplier
 const RECONNECT_MAX_DELAY = 30000; // Reduced from 60000ms
 
 export class Shard extends EventEmitter {
-  #client: Client;
   #id: number;
   #ws: WebSocket | null = null;
   #heartbeatInterval: NodeJS.Timeout | null = null;
@@ -46,7 +42,7 @@ export class Shard extends EventEmitter {
   #isProcessingMessages = false;
 
   constructor(
-    client: Client,
+    _client: unknown,
     id: number,
     totalShards: number,
     gatewayURL: string,
@@ -54,7 +50,6 @@ export class Shard extends EventEmitter {
     intents: number
   ) {
     super();
-    this.#client = client;
     this.#id = id;
     this.#totalShards = totalShards;
     this.#gatewayURL = gatewayURL;
