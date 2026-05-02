@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
+import { randomFillSync } from 'node:crypto';
 import { VoiceOpcodes, VoiceEncryptionModes } from './VoiceOpcodes.js';
 import { VoiceUDP } from './VoiceUDP.js';
 import type { Client } from '../client/Client.js';
@@ -73,6 +74,10 @@ export class VoiceConnection extends EventEmitter {
 
   get ready(): boolean {
     return this.#ready;
+  }
+
+  get speaking(): boolean {
+    return this.#speaking;
   }
 
   async connect(): Promise<void> {
@@ -241,7 +246,7 @@ export class VoiceConnection extends EventEmitter {
       this.#udp.send(packet);
     } else if (this.#mode === VoiceEncryptionModes.XSALSA20_POLY1305_SUFFIX) {
       nonce = Buffer.alloc(24);
-      crypto.randomFillSync(nonce);
+      randomFillSync(nonce);
       encrypted = this.#encryptXSalsa20(opusPacket, nonce);
       const packet = Buffer.concat([rtpHeader, encrypted, nonce]);
       this.#udp.send(packet);

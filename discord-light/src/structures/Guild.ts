@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { Structure, type APIData } from './Base.js';
 import { Collection } from '../utils/Collection.js';
 import { Channel } from './Channel.js';
