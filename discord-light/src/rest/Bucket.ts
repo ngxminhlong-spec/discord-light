@@ -22,6 +22,7 @@ export class Bucket {
   #processing = false;
   #rateLimit: RateLimitData | null = null;
   #globalReset = 0;
+  #processTimer: NodeJS.Timeout | null = null;
 
   constructor(id: string, logger: Logger) {
     this.#id = id;
@@ -52,27 +53,42 @@ export class Bucket {
     this.#queue.push(request);
     if (!this.#processing) {
       this.#processing = true;
-      void this.#process();
+      void this.#scheduleProcess();
     }
+  }
+
+  /**
+   * Schedule processing instead of running immediately
+   * Allows batching of requests and reduces event loop pressure
+   */
+  #scheduleProcess(): void {
+    if (this.#processTimer) return;
+    this.#processTimer = setImmediate(() => {
+      this.#processTimer = null;
+      void this.#process();
+    });
   }
 
   async #process(): Promise<void> {
     while (this.#queue.length > 0) {
       const request = this.#queue[0];
+      const now = Date.now();
 
       // Check global rate limit
-      const now = Date.now();
       if (this.#globalReset > now) {
         const wait = this.#globalReset - now;
         this.#logger.debug('Bucket %s waiting %dms for global rate limit', this.#id, wait);
         await sleep(wait);
+        continue; // Re-check after waiting
       }
 
       // Check bucket rate limit
-      if (this.#rateLimit && this.#rateLimit.remaining <= 0 && this.#rateLimit.reset > now) {
-        const wait = this.#rateLimit.reset - now + 50; // 50ms buffer
+      if (this.#rateLimit && this.#rateLimit.remaining <= 0) {
+        const resetTime = this.#rateLimit.reset > now ? this.#rateLimit.reset : now;
+        const wait = resetTime - now + 50; // 50ms buffer
         this.#logger.debug('Bucket %s waiting %dms for bucket rate limit', this.#id, wait);
         await sleep(wait);
+        continue; // Re-check after waiting
       }
 
       try {
@@ -84,6 +100,7 @@ export class Bucket {
 
       this.#queue.shift();
     }
+
     this.#processing = false;
   }
 }

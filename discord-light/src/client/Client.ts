@@ -21,6 +21,7 @@ export interface CacheOptions {
   messages?: boolean;
   sweepInterval?: number;
   sweepTTL?: number;
+  maxCacheSize?: number; // New: limit cache size
 }
 
 export interface ClientOptions {
@@ -39,6 +40,7 @@ export interface ClientOptions {
   };
 }
 
+// Event aliases mapping
 const EventAliases: Record<string, string> = {
   MESSAGE_CREATE: 'message',
   MESSAGE_UPDATE: 'messageUpdate',
@@ -99,6 +101,13 @@ const EventAliases: Record<string, string> = {
   AUTO_MODERATION_ACTION_EXECUTION: 'autoModerationActionExecution',
 };
 
+// Cache for privileged intents
+const PRIVILEGED_INTENTS = [
+  1 << 0,  // GUILD_MEMBERS
+  1 << 8,  // GUILD_PRESENCES  
+  1 << 15, // MESSAGE_CONTENT
+];
+
 export class Client extends EventEmitter {
   #options: ClientOptions;
   #rest: RestManager;
@@ -114,6 +123,8 @@ export class Client extends EventEmitter {
   #logger: Logger;
   #ready = false;
   #sweepTimer: NodeJS.Timeout | null = null;
+  #dispatchQueue: Array<{ event: string; data: unknown }> = [];
+  #isProcessingDispatch = false;
 
   constructor(options: ClientOptions) {
     super();
@@ -181,24 +192,52 @@ export class Client extends EventEmitter {
     const intents = this.#resolveIntents();
     this.#logger.info('Resolved intents: %d', intents);
 
-    const gatewayData = await this.#rest.get<{ url: string; shards: number; session_start_limit: { total: number; remaining: number; reset_after: number; max_concurrency: number } }>('/gateway/bot');
+    const gatewayData = await this.#rest.get<{
+      url: string;
+      shards: number;
+      session_start_limit: {
+        total: number;
+        remaining: number;
+        reset_after: number;
+        max_concurrency: number;
+      };
+    }>('/gateway/bot');
 
-    this.#logger.info('Gateway info: %d shards available, %d remaining sessions',
-      gatewayData.shards, gatewayData.session_start_limit.remaining);
+    this.#logger.info(
+      'Gateway info: %d shards available, %d remaining sessions',
+      gatewayData.shards,
+      gatewayData.session_start_limit.remaining
+    );
 
     if (gatewayData.session_start_limit.remaining === 0) {
-      throw new Error(`Session start limit reached. Resets in ${gatewayData.session_start_limit.reset_after}ms`);
+      throw new Error(
+        `Session start limit reached. Resets in ${gatewayData.session_start_limit.reset_after}ms`
+      );
     }
 
     const shardCount = this.#options.shardCount ?? gatewayData.shards;
-    this.#shardManager = new ShardManager(this, this.#options.token, intents, shardCount, gatewayData.url);
+    this.#shardManager = new ShardManager(
+      this,
+      this.#options.token,
+      intents,
+      shardCount,
+      gatewayData.url
+    );
 
-    this.#shardManager.on('shardReady', (_shardId: number, data: { user: { id: string; username: string; discriminator: string; avatar: string | null } }) => {
-      if (!this.#user) {
-        this.#user = new User(data.user);
-        this.#users.set(this.#user.id, this.#user);
+    this.#shardManager.on(
+      'shardReady',
+      (
+        _shardId: number,
+        data: {
+          user: { id: string; username: string; discriminator: string; avatar: string | null };
+        }
+      ) => {
+        if (!this.#user) {
+          this.#user = new User(data.user);
+          this.#users.set(this.#user.id, this.#user);
+        }
       }
-    });
+    );
 
     this.#shardManager.on('allShardsReady', () => {
       this.#ready = true;
@@ -207,7 +246,12 @@ export class Client extends EventEmitter {
     });
 
     this.#shardManager.on('dispatch', (_shardId: number, event: string, data: unknown) => {
-      this.#handleDispatch(event, data);
+      // Queue dispatch events for batch processing
+      this.#dispatchQueue.push({ event, data });
+      if (!this.#isProcessingDispatch) {
+        this.#isProcessingDispatch = true;
+        setImmediate(() => this.#processDispatchQueue());
+      }
     });
 
     this.#shardManager.on('shardError', (shardId: number, err: Error) => {
@@ -281,8 +325,13 @@ export class Client extends EventEmitter {
       throw new Error('Invalid token: Token appears to be too short.');
     }
 
-    if (!token.startsWith('Bot ') && !token.match(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)) {
-      this.#logger.warn('Token does not appear to be a standard Discord Bot token. Ensure you are using a Bot token from the Discord Developer Portal.');
+    if (
+      !token.startsWith('Bot ') &&
+      !token.match(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)
+    ) {
+      this.#logger.warn(
+        'Token does not appear to be a standard Discord Bot token. Ensure you are using a Bot token from the Discord Developer Portal.'
+      );
     }
 
     if (token.startsWith('Bot ')) {
@@ -316,15 +365,17 @@ export class Client extends EventEmitter {
   }
 
   #validateIntents(intents: number): void {
-    const privileged = [Intents.GUILD_MEMBERS, Intents.GUILD_PRESENCES, Intents.MESSAGE_CONTENT];
-    const requestedPrivileged = privileged.filter(p => (intents & p) === p);
+    const requestedPrivileged = PRIVILEGED_INTENTS.filter(p => (intents & p) === p);
 
     if (requestedPrivileged.length > 0) {
-      this.#logger.warn('Privileged intents requested: %s. Ensure these are enabled in the Discord Developer Portal.',
-        requestedPrivileged.map(p => {
-          const entry = Object.entries(Intents).find(([, v]) => v === p);
-          return entry?.[0] ?? String(p);
-        }).join(', ')
+      this.#logger.warn(
+        'Privileged intents requested: %s. Ensure these are enabled in the Discord Developer Portal.',
+        requestedPrivileged
+          .map(p => {
+            const entry = Object.entries(Intents).find(([, v]) => v === p);
+            return entry?.[0] ?? String(p);
+          })
+          .join(', ')
       );
     }
   }
@@ -333,7 +384,11 @@ export class Client extends EventEmitter {
     const cache = this.#options.cache;
     if (!cache?.sweepInterval || !cache?.sweepTTL) return;
 
-    this.#logger.info('Cache sweep enabled: interval=%dms, TTL=%dms', cache.sweepInterval, cache.sweepTTL);
+    this.#logger.info(
+      'Cache sweep enabled: interval=%dms, TTL=%dms',
+      cache.sweepInterval,
+      cache.sweepTTL
+    );
 
     this.#sweepTimer = setInterval(() => {
       const now = Date.now();
@@ -361,6 +416,24 @@ export class Client extends EventEmitter {
     }, cache.sweepInterval);
   }
 
+  /**
+   * Batch process dispatch events to reduce event loop pressure
+   */
+  #processDispatchQueue(): void {
+    const batch = this.#dispatchQueue.splice(0, 50); // Process up to 50 events per batch
+    for (const { event, data } of batch) {
+      this.#handleDispatch(event, data);
+    }
+
+    this.#isProcessingDispatch = false;
+
+    // Schedule next batch if queue is not empty
+    if (this.#dispatchQueue.length > 0) {
+      this.#isProcessingDispatch = true;
+      setImmediate(() => this.#processDispatchQueue());
+    }
+  }
+
   #emitAliased(event: string, ...args: unknown[]): void {
     this.emit(event, ...args);
     const alias = EventAliases[event];
@@ -372,7 +445,12 @@ export class Client extends EventEmitter {
   #handleDispatch(event: string, data: unknown): void {
     switch (event) {
       case 'GUILD_CREATE': {
-        const guildData = data as { id: string; channels?: Array<Record<string, unknown>>; members?: Array<Record<string, unknown>>; roles?: Array<Record<string, unknown>> };
+        const guildData = data as {
+          id: string;
+          channels?: Array<Record<string, unknown>>;
+          members?: Array<Record<string, unknown>>;
+          roles?: Array<Record<string, unknown>>;
+        };
         if (this.#options.cache?.guilds !== false) {
           const guild = new Guild(this, guildData as Parameters<typeof Guild>[0]);
           this.#guilds.set(guild.id, guild);
@@ -390,7 +468,10 @@ export class Client extends EventEmitter {
           if (guildData.members) {
             for (const m of guildData.members) {
               if (this.#options.cache?.members !== false && m.user) {
-                const member = new Member(this, { ...m, guild_id: guild.id } as MemberData);
+                const member = new Member(
+                  this,
+                  { ...m, guild_id: guild.id } as MemberData
+                );
                 this.#members.set(`${guild.id}-${member.userId}`, member);
                 guild.members.set(member.userId!, member);
               }
@@ -399,9 +480,13 @@ export class Client extends EventEmitter {
 
           if (guildData.roles) {
             for (const r of guildData.roles) {
-              const { Role: RoleClass } = await import('./Role.js');
-              const role = new RoleClass(this, { ...r, guild_id: guild.id } as Parameters<typeof RoleClass>[1]);
-              guild.roles.set(role.id, role);
+              import('./Role.js').then(({ Role: RoleClass }) => {
+                const role = new RoleClass(
+                  this,
+                  { ...r, guild_id: guild.id } as Parameters<typeof RoleClass>[1]
+                );
+                guild.roles.set(role.id, role);
+              }).catch(err => this.#logger.error('Failed to load Role class: %s', err.message));
             }
           }
 
@@ -591,10 +676,14 @@ export class Client extends EventEmitter {
         const rData = data as { guild_id: string; role: Record<string, unknown> };
         const guild = this.#guilds.get(rData.guild_id);
         if (guild) {
-          const { Role: RoleClass } = await import('./Role.js');
-          const role = new RoleClass(this, { ...rData.role, guild_id: rData.guild_id } as Parameters<typeof RoleClass>[1]);
-          guild.roles.set(role.id, role);
-          this.#emitAliased('GUILD_ROLE_CREATE', role);
+          import('./Role.js').then(({ Role: RoleClass }) => {
+            const role = new RoleClass(
+              this,
+              { ...rData.role, guild_id: rData.guild_id } as Parameters<typeof RoleClass>[1]
+            );
+            guild.roles.set(role.id, role);
+            this.#emitAliased('GUILD_ROLE_CREATE', role);
+          }).catch(err => this.#logger.error('Failed to load Role class: %s', err.message));
         }
         break;
       }

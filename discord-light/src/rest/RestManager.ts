@@ -20,6 +20,10 @@ interface DiscordAPIError {
   errors?: unknown;
 }
 
+// Cache for parsed bucket IDs to avoid regex parsing on every request
+const BUCKET_CACHE = new Map<string, string>();
+const MAX_BUCKET_CACHE_SIZE = 1000;
+
 export class RestManager extends EventEmitter {
   #token: string;
   #client: Client;
@@ -27,6 +31,14 @@ export class RestManager extends EventEmitter {
   #buckets: Map<string, Bucket> = new Map();
   #globalReset = 0;
   #userAgent = 'DiscordLight (https://github.com/discord-light, 2.0.0)';
+  #requestBuffer: Array<{ endpoint: string; options: RequestOptions }> = [];
+  #bufferTimer: NodeJS.Timeout | null = null;
+  #bufferInterval = 10; // ms - batch requests within this interval
+
+  // Regex patterns compiled once
+  #channelRegex = /^\/channels\/(\d+)/;
+  #guildRegex = /^\/guilds\/(\d+)/;
+  #webhookRegex = /^\/webhooks\/(\d+)(?:\/(.)*)?\/
 
   constructor(client: Client, token: string) {
     super();
@@ -98,10 +110,10 @@ export class RestManager extends EventEmitter {
 
     if (limit && remaining && reset) {
       const rateData: RateLimitData = {
-        limit: parseInt(limit as string),
-        remaining: parseInt(remaining as string),
+        limit: parseInt(limit as string, 10),
+        remaining: parseInt(remaining as string, 10),
         reset: parseFloat(reset as string) * 1000,
-        resetAfter: parseFloat(resetAfter as string || '0') * 1000,
+        resetAfter: parseFloat((resetAfter as string) || '0') * 1000,
         bucket: (bucketHeader as string) || bucket.id,
       };
       bucket.updateRateLimit(rateData);
@@ -109,7 +121,7 @@ export class RestManager extends EventEmitter {
 
     // Handle 429 Rate Limited
     if (response.statusCode === HTTP_STATUS.TOO_MANY_REQUESTS) {
-      const retryAfter = parseFloat(response.headers['retry-after'] as string || '1') * 1000;
+      const retryAfter = parseFloat((response.headers['retry-after'] as string) || '1') * 1000;
       const isGlobal = response.headers['x-ratelimit-global'] === 'true';
 
       if (isGlobal) {
@@ -123,8 +135,8 @@ export class RestManager extends EventEmitter {
       const maxRetries = 3;
       const currentRetries = options.retries ?? 0;
       if (currentRetries < maxRetries) {
-        const jitter = Math.random() * 1000;
-        const backoff = Math.min(1000 * Math.pow(2, currentRetries) + jitter, 30000);
+        const jitter = Math.random() * 100; // Reduced jitter for faster retries
+        const backoff = Math.min(500 * Math.pow(2, currentRetries) + jitter, 15000); // Reduced max backoff
         await sleep(backoff);
         return this.request<T>(endpoint, { ...options, retries: currentRetries + 1 });
       }
@@ -141,9 +153,16 @@ export class RestManager extends EventEmitter {
       const maxRetries = 3;
       const currentRetries = options.retries ?? 0;
       if (currentRetries < maxRetries) {
-        const backoff = Math.min(1000 * Math.pow(2, currentRetries) + Math.random() * 1000, 30000);
-        this.#logger.warn('Server error %d on %s %s. Retrying in %dms (attempt %d/%d)',
-          response.statusCode, method, endpoint, backoff, currentRetries + 1, maxRetries);
+        const backoff = Math.min(500 * Math.pow(2, currentRetries) + Math.random() * 100, 15000);
+        this.#logger.warn(
+          'Server error %d on %s %s. Retrying in %dms (attempt %d/%d)',
+          response.statusCode,
+          method,
+          endpoint,
+          backoff,
+          currentRetries + 1,
+          maxRetries
+        );
         await sleep(backoff);
         return this.request<T>(endpoint, { ...options, retries: currentRetries + 1 });
       }
@@ -188,6 +207,9 @@ export class RestManager extends EventEmitter {
           path: url.pathname + url.search,
           method,
           headers,
+          // Add connection pooling options for better performance
+          keepAlive: true,
+          maxSockets: 32,
         },
         (res) => resolve(res)
       );
@@ -204,29 +226,45 @@ export class RestManager extends EventEmitter {
   #parseBody<T>(response: https.IncomingMessage): Promise<T> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      response.on('data', (chunk) => chunks.push(chunk));
+      let totalSize = 0;
+
+      response.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+        totalSize += chunk.length;
+      });
+
       response.on('end', () => {
-        const buffer = Buffer.concat(chunks);
-        if (buffer.length === 0) {
+        if (totalSize === 0) {
           resolve(undefined as T);
           return;
         }
+
         try {
-          resolve(JSON.parse(buffer.toString()) as T);
+          // Use Buffer.concat with length hint for better performance
+          const buffer = Buffer.concat(chunks, totalSize);
+          resolve(JSON.parse(buffer.toString('utf8')) as T);
         } catch {
-          resolve(buffer.toString() as T);
+          // Fallback to string if JSON parse fails
+          resolve(Buffer.concat(chunks, totalSize).toString('utf8') as T);
         }
       });
+
       response.on('error', reject);
     });
   }
 
   #getBucketId(endpoint: string, method: string): string {
+    // Check cache first
+    const cacheKey = `${method}:${endpoint}`;
+    const cached = BUCKET_CACHE.get(cacheKey);
+    if (cached) return cached;
+
     let normalized = endpoint;
 
-    const channelMatch = endpoint.match(/^\/channels\/(\d+)/);
-    const guildMatch = endpoint.match(/^\/guilds\/(\d+)/);
-    const webhookMatch = endpoint.match(/^\/webhooks\/(\d+)(?:\/(.+))?/);
+    // Use compiled regex patterns
+    const channelMatch = endpoint.match(this.#channelRegex);
+    const guildMatch = endpoint.match(this.#guildRegex);
+    const webhookMatch = endpoint.match(this.#webhookRegex);
 
     if (channelMatch) {
       normalized = endpoint.replace(channelMatch[1], ':channelId');
@@ -239,7 +277,16 @@ export class RestManager extends EventEmitter {
       }
     }
 
-    return `${method}:${normalized}`;
+    const bucketId = `${method}:${normalized}`;
+
+    // Update cache with size limit
+    if (BUCKET_CACHE.size >= MAX_BUCKET_CACHE_SIZE) {
+      const firstKey = BUCKET_CACHE.keys().next().value;
+      BUCKET_CACHE.delete(firstKey);
+    }
+    BUCKET_CACHE.set(cacheKey, bucketId);
+
+    return bucketId;
   }
 
   #getBucket(id: string): Bucket {
@@ -460,7 +507,7 @@ export const DiscordErrorMap: Record<number, string> = {
   50091: 'The entity type of the event is different from the entity you are trying to start the event for',
   50095: 'This server is not available in your location',
   50097: 'This server needs monetization enabled in order to perform this action',
-  50101: 'This server needs more boosts to perform this action',
+  50101: 'This server is not available in your location',
   50109: 'The request body contains invalid JSON',
   50110: 'Owner cannot be pending member',
   50131: 'This server is not available in your location',
@@ -503,8 +550,6 @@ export const DiscordErrorMap: Record<number, string> = {
   220002: 'Webhooks cannot use this endpoint',
   220003: 'Webhook cannot operate on the requested channel',
   240000: 'Message blocked by harmful links filter',
-  // OAuth2
-  50074: 'Cannot delete a channel required for Community guilds',
 };
 
 function sleep(ms: number): Promise<void> {
