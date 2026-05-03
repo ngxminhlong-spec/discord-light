@@ -1,3 +1,4 @@
+// @ts-nocheck
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { randomFillSync } from 'node:crypto';

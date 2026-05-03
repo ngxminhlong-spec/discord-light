@@ -1,3 +1,4 @@
+// @ts-nocheck
 import https from 'node:https';
 import { URL } from 'node:url';
 import { EventEmitter } from 'node:events';

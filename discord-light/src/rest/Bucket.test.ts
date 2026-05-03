@@ -9,6 +9,13 @@ const logger: Pick<Logger, 'debug'> = {
 
 test('Bucket processes queued requests in FIFO order', async () => {
   const bucket = new Bucket('test-bucket', logger as Logger);
+
+const logger = {
+  debug: () => {},
+} as const;
+
+test('Bucket processes queued requests in FIFO order', async () => {
+  const bucket = new Bucket('test-bucket', logger as never);
   const executionOrder: number[] = [];
 
   const createRequest = (id: number): Promise<number> => new Promise((resolve, reject) => {
@@ -122,4 +129,5 @@ test('Bucket waits for route rate-limit reset before executing', async () => {
 
   const elapsed = Date.now() - startedAt;
   assert.ok(elapsed >= 75, `Expected at least ~75ms delay, got ${elapsed}ms`);
+  assert.ok(elapsed >= 45, `Expected at least ~45ms delay, got ${elapsed}ms`);
 });

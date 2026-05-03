@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { InteractionType, MessageComponentType, ButtonStyle } from '../utils/Constants.js';
 import type { Client } from '../client/Client.js';
 

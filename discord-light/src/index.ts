@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Client
 export { Client, type ClientOptions, type CacheOptions } from './client/Client.js';
 

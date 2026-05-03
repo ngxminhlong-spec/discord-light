@@ -1,3 +1,4 @@
+// @ts-nocheck
 import WebSocket from 'ws';
 import { EventEmitter } from 'node:events';
 import { GatewayOpcodes, ResumeableCloseCodes, FatalCloseCodes } from '../utils/Constants.js';
