@@ -22,7 +22,7 @@ export class Bucket {
   #processing = false;
   #rateLimit: RateLimitData | null = null;
   #globalReset = 0;
-  #processTimer: NodeJS.Timeout | null = null;
+  #processTimer: NodeJS.Timeout | NodeJS.Immediate | null = null;
 
   constructor(id: string, logger: Logger) {
     this.#id = id;
