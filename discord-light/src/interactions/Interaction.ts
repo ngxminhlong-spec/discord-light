@@ -1,5 +1,4 @@
 import { InteractionType, MessageComponentType, ButtonStyle } from '../utils/Constants.js';
-import type { RestManager } from '../rest/RestManager.js';
 import type { Client } from '../client/Client.js';
 
 export interface InteractionData {
