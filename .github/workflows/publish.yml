@@ -1,0 +1,59 @@
+name: CI/CD for Discord-Light
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      # Chạy test từ file đã build trong dist
+      - name: Run Native Node Tests
+        id: run_tests
+        continue-on-error: true
+        run: npm test
+
+      # Nếu TEST FAIL: Ghi lỗi, không tăng version
+      - name: On Failure
+        if: steps.run_tests.outcome == 'failure'
+        run: |
+          echo "Test failed on $(date -u)" > error.txt
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add error.txt
+          git commit -m "fix: logs test failure [skip ci]"
+          git push
+          exit 1
+
+      # Nếu TEST PASS: Tăng version và Publish
+      - name: On Success
+        if: steps.run_tests.outcome == 'success'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          npm version patch -m "chore: release version %s [skip ci]"
+          git push origin main --follow-tags
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
