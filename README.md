@@ -1,4 +1,4 @@
-# Discord Light v2.0
+# Discord Light
 
 A **production-ready**, lightweight, superfast, and reliable Discord library for Node.js with first-class voice support, slash commands, and advanced rate-limiting.
 
